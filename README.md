@@ -4,23 +4,44 @@
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.36-blue)
 ![Docker](https://img.shields.io/badge/Docker-Hardened-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Python-green)
+![Cognito](https://img.shields.io/badge/Amazon-Cognito-purple)
 ![CI](https://img.shields.io/badge/GitHub_Actions-CI-success)
 
-A cloud-native FastAPI workload deployed and validated on a real Amazon EKS cluster.
-
-The project focuses on Kubernetes workload engineering, container security, AWS workload identity, immutable container delivery, DynamoDB persistence, event publishing, and automated CI validation.
+A cloud-native FastAPI workload engineered for Amazon EKS with hardened containers, AWS workload identity, real Amazon Cognito JWT authentication, DynamoDB persistence, EventBridge publishing, and automated CI validation.
 
 ---
 
-## Architecture
+# Architecture
 
 ```text
-Client
+User
+  │
+  │ Amazon Cognito Access Token
+  ▼
+FastAPI
+  │
+  ├── JWT Signature Validation
+  ├── Issuer Validation
+  ├── Client Validation
+  ├── Token Expiration Validation
+  └── Cognito Group Mapping
+        │
+        ├── tenant-tenant-001
+        └── role-HospitalAdmin
   │
   ▼
-Kubernetes Service
+POST /drugs
   │
-  ▼
+  ├── tenant_id from authenticated identity
+  ├── created_by from Cognito sub
+  │
+  ├── DynamoDB
+  │     └── pharmacy-api-drugs
+  │
+  └── EventBridge
+        └── DrugCreated
+
+
 Amazon EKS
   │
   └── pharmacy-api Deployment
@@ -28,14 +49,8 @@ Amazon EKS
         ├── FastAPI Pod
         ├── FastAPI Pod
         │
-        ├── EKS Pod Identity
-        │     └── pharmacy-api-eks-role
-        │
-        ├── DynamoDB
-        │     └── pharmacy-api-drugs
-        │
-        └── EventBridge
-              └── DrugCreated event
+        └── EKS Pod Identity
+              └── pharmacy-api-eks-role
 
 
 Container Delivery
@@ -49,32 +64,38 @@ Amazon ECR
 Immutable SHA256 Image Digest
   │
   ▼
-EKS Deployment
+Amazon EKS
 ```
 
 **AWS Region:** `eu-west-2`
 
 ---
 
-## What Was Validated
+# What This Project Demonstrates
 
-This repository was deployed and tested against a live Amazon EKS environment.
+The project covers:
 
-The validation included:
-
-- Amazon EKS cluster with a managed EC2 worker node
-- Kubernetes 1.36 workload deployment
-- two FastAPI replicas running successfully
-- immutable Amazon ECR image deployment using a SHA256 digest
-- hardened non-root container execution
-- readiness and liveness probes using `/health`
-- EKS Pod Identity with a dedicated least-privilege IAM role
-- successful STS authentication from inside a running Pod
-- successful HTTP health check
-- real API request through the deployed EKS workload
-- successful DynamoDB persistence
-- EventBridge event publishing from the application workflow
-- GitHub Actions validation for Python, containers, and Kubernetes manifests
+- Amazon EKS workload deployment
+- Kubernetes 1.36
+- hardened non-root containers
+- immutable ECR image deployment
+- readiness and liveness probes
+- EKS Pod Identity
+- least-privilege IAM
+- Amazon Cognito authentication
+- RS256 JWT verification
+- Cognito JWKS validation
+- issuer validation
+- client/audience validation
+- access-token enforcement
+- tenant-aware identity extraction
+- role extraction from Cognito groups
+- DynamoDB persistence
+- EventBridge event publishing
+- automated Python tests
+- Kubernetes schema validation
+- YAML linting
+- GitHub Actions CI
 
 ---
 
@@ -82,7 +103,7 @@ The validation included:
 
 ## Amazon EKS Cluster
 
-The managed worker node reached `Ready` state and the EKS Pod Identity Agent was running successfully.
+The managed worker node reached `Ready` state and the EKS Pod Identity Agent was validated during the original EKS deployment phase.
 
 ![Amazon EKS cluster ready](docs/eks-cluster-ready.png)
 
@@ -90,7 +111,7 @@ The managed worker node reached `Ready` state and the EKS Pod Identity Agent was
 
 ## Running Kubernetes Workload
 
-The FastAPI deployment runs two replicas on Amazon EKS using an immutable Amazon ECR image digest.
+The FastAPI workload was validated with two replicas running on Amazon EKS using an immutable Amazon ECR image digest.
 
 ![Pharmacy workload running](docs/pharmacy-workload-running.png)
 
@@ -98,9 +119,13 @@ The FastAPI deployment runs two replicas on Amazon EKS using an immutable Amazon
 
 ## EKS Pod Identity
 
-The running application Pod successfully authenticated through the dedicated `pharmacy-api-eks-role`.
+The application Pod authenticated through the dedicated:
 
-No long-lived AWS credentials are mounted into the workload.
+```text
+pharmacy-api-eks-role
+```
+
+without storing long-lived AWS credentials inside the workload.
 
 ![EKS Pod Identity proof](docs/pod-identity-proof.png)
 
@@ -108,43 +133,392 @@ No long-lived AWS credentials are mounted into the workload.
 
 ## Application Health
 
-The deployed application returned HTTP `200 OK` from the `/health` endpoint.
+The deployed application returned:
+
+```text
+HTTP/1.1 200 OK
+```
+
+from:
+
+```text
+GET /health
+```
 
 ![Application health check](docs/health-check.png)
 
 ---
 
-## DynamoDB Persistence
+# Amazon Cognito Authentication
 
-A drug record submitted through the running EKS workload was successfully persisted to the `pharmacy-api-drugs` DynamoDB table.
+The application now uses real Amazon Cognito access tokens instead of hard-coded demo claims.
 
-![DynamoDB persistence](docs/dynamodb-persistence.png)
+The request path is:
+
+```text
+Client
+  │
+  │ Authorization: Bearer <access-token>
+  ▼
+FastAPI
+  │
+  ├── Fetch Cognito JWKS
+  ├── Verify RS256 signature
+  ├── Verify issuer
+  ├── Verify client binding
+  ├── Verify expiration
+  ├── Verify token_use=access
+  │
+  └── Extract identity
+        │
+        ├── sub
+        ├── cognito:groups
+        ├── tenant
+        └── role
+```
+
+The application supports generic OIDC configuration while remaining compatible with Amazon Cognito.
+
+Configuration is supplied through:
+
+```text
+OIDC_ISSUER
+OIDC_CLIENT_ID
+OIDC_JWKS_URL
+OIDC_TENANT_CLAIM
+OIDC_ROLE_CLAIM
+```
 
 ---
 
-## Continuous Integration
+# Cognito Identity Model
 
-GitHub Actions validates the application, hardened container, and Kubernetes configuration.
+For the validated Cognito environment, group membership carries tenant and role information.
 
-![GitHub Actions CI](docs/github-actions-ci.png)
+Example groups:
+
+```text
+tenant-tenant-001
+role-HospitalAdmin
+```
+
+The API derives:
+
+```text
+tenant_id = tenant-001
+role      = HospitalAdmin
+user_id   = Cognito sub
+```
+
+The persistent Cognito subject becomes:
+
+```text
+created_by
+```
+
+on stored drug records.
+
+---
+
+# Cognito Authentication Evidence
+
+A real Cognito access token was passed to:
+
+```text
+GET /auth/me
+```
+
+The API validated the token and returned:
+
+```json
+{
+  "authenticated": true,
+  "user_id": "<redacted-cognito-sub>",
+  "tenant_id": "tenant-001",
+  "role": "HospitalAdmin"
+}
+```
+
+![Cognito authentication](docs/cognito-authentication.png)
+
+This validates:
+
+```text
+Cognito-issued access token
+        ↓
+JWKS signature verification
+        ↓
+issuer/client validation
+        ↓
+tenant + role extraction
+        ↓
+HTTP 200
+```
+
+---
+
+# Authenticated Drug Creation
+
+The protected endpoint:
+
+```text
+POST /drugs
+```
+
+requires a valid bearer token.
+
+An authenticated Cognito request successfully created a drug record:
+
+```text
+Cognito Access Token
+        ↓
+POST /drugs
+        ↓
+HTTP 200
+        ↓
+Drug created successfully
+```
+
+![Cognito authenticated drug creation](docs/cognito-drug-create.png)
+
+The API no longer accepts hard-coded identity values.
+
+Instead:
+
+```text
+tenant_id
+```
+
+comes from the validated identity, while:
+
+```text
+created_by
+```
+
+comes from the authenticated Cognito subject.
+
+---
+
+# DynamoDB Identity Persistence
+
+The record created through the authenticated API was verified directly in DynamoDB.
+
+The persisted record contained:
+
+```text
+drug_name    = Amoxicillin
+batch_number = COGNITO-EVIDENCE-001
+tenant_id    = tenant-001
+created_by   = authenticated Cognito subject
+```
+
+![Cognito DynamoDB persistence](docs/cognito-dynamodb-persistence.png)
+
+This demonstrates that authenticated identity context survives the complete application flow:
+
+```text
+Cognito
+   ↓
+JWT
+   ↓
+FastAPI
+   ↓
+Drug Service
+   ↓
+DynamoDB
+```
+
+---
+
+# Authentication Behaviour
+
+The API follows a fail-closed security model.
+
+## Missing Bearer Token
+
+```text
+POST /drugs
+        ↓
+401 Unauthorized
+```
+
+## Invalid JWT
+
+```text
+Invalid signature
+Invalid issuer
+Wrong client
+Expired token
+Wrong token type
+        ↓
+401 Unauthorized
+```
+
+## Missing Tenant Identity
+
+```text
+Valid JWT
+but no tenant identity
+        ↓
+403 Forbidden
+```
+
+## Valid Access Token
+
+```text
+Valid Cognito access token
+        ↓
+Identity extracted
+        ↓
+Request allowed
+```
+
+---
+
+# Authenticated Principal Endpoint
+
+The API includes:
+
+```text
+GET /auth/me
+```
+
+This endpoint validates authentication without requiring a DynamoDB write.
+
+Example:
+
+```bash
+curl \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  http://127.0.0.1:8000/auth/me
+```
+
+Example result:
+
+```json
+{
+  "authenticated": true,
+  "user_id": "<cognito-sub>",
+  "tenant_id": "tenant-001",
+  "role": "HospitalAdmin"
+}
+```
+
+---
+
+# Public Health Endpoint
+
+The health endpoint intentionally remains unauthenticated:
+
+```text
+GET /health
+```
+
+This allows Kubernetes probes and operational health checks to function without application credentials.
+
+Expected response:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+---
+
+# Application Flow
+
+Creating a drug now follows:
+
+```text
+POST /drugs
+    │
+    ▼
+Bearer Access Token
+    │
+    ▼
+JWT Validation
+    │
+    ├── Cognito JWKS
+    ├── Signature
+    ├── Issuer
+    ├── Client
+    ├── Expiration
+    └── Token Type
+    │
+    ▼
+Authenticated Principal
+    │
+    ├── user_id
+    ├── tenant_id
+    └── role
+    │
+    ▼
+Drug Service
+    │
+    ├── Generate Record ID
+    ├── Attach tenant_id
+    ├── Attach created_by
+    ├── Persist to DynamoDB
+    └── Publish DrugCreated
+    │
+    ▼
+Amazon EventBridge
+```
+
+---
+
+# Example Authenticated Request
+
+```bash
+curl -X POST http://127.0.0.1:8000/drugs \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "drug_name": "Amoxicillin",
+    "batch_number": "COGNITO-EVIDENCE-001",
+    "quantity": 25,
+    "reorder_level": 5,
+    "expiry_date": "2027-12-31",
+    "supplier": "Cognito Test Supplier"
+  }'
+```
+
+Example response:
+
+```json
+{
+  "message": "Drug created successfully",
+  "data": {
+    "drug_name": "Amoxicillin",
+    "batch_number": "COGNITO-EVIDENCE-001",
+    "quantity": 25,
+    "reorder_level": 5,
+    "expiry_date": "2027-12-31",
+    "supplier": "Cognito Test Supplier",
+    "id": "<generated-record-id>",
+    "tenant_id": "tenant-001",
+    "created_by": "<cognito-sub>"
+  }
+}
+```
 
 ---
 
 # Security Engineering
 
-The container and Kubernetes workload use several defense-in-depth controls.
-
 ## Container Security
 
-- runs as the non-root `appuser`
-- minimal Python slim base image
-- reduced Docker build context using `.dockerignore`
-- local development files excluded from the image
-- no local virtual environment copied into the image
-- runtime validated with all Linux capabilities dropped
-- runtime validated with `no-new-privileges`
-- runtime validated with a read-only root filesystem
-- temporary writable storage limited to `/tmp`
+The application container:
+
+- runs as non-root `appuser`
+- uses a minimal Python slim base image
+- excludes development files with `.dockerignore`
+- excludes local virtual environments
+- drops all Linux capabilities
+- uses `no-new-privileges`
+- supports a read-only root filesystem
+- limits writable storage to `/tmp`
 
 ---
 
@@ -158,35 +532,61 @@ The Kubernetes workload includes:
 - `readOnlyRootFilesystem: true`
 - all Linux capabilities dropped
 - `RuntimeDefault` seccomp profile
-- CPU and memory requests
-- CPU and memory limits
+- CPU requests
+- CPU limits
+- memory requests
+- memory limits
 - readiness probes
 - liveness probes
 - memory-backed `/tmp`
-- rolling update strategy
-- dedicated `pharmacy-api` ServiceAccount
+- rolling updates
+- dedicated ServiceAccount
+- disabled automatic Kubernetes ServiceAccount token mounting
 
 ---
 
-## AWS Workload Identity
+# AWS Workload Identity
 
-The application uses **Amazon EKS Pod Identity** rather than long-lived AWS access keys.
+The application uses **Amazon EKS Pod Identity** for AWS service access.
 
-The Kubernetes ServiceAccount:
-
-```text
-pharmacy-api
-```
-
-is associated with the IAM role:
+This is separate from Cognito end-user authentication.
 
 ```text
-pharmacy-api-eks-role
+End User Identity
+        ↓
+Amazon Cognito
+        ↓
+JWT
+        ↓
+FastAPI
+
+
+Workload Identity
+        ↓
+EKS Pod Identity
+        ↓
+IAM Role
+        ↓
+DynamoDB / EventBridge
 ```
 
-The workload IAM role is restricted to the required runtime permissions.
+This separation provides two distinct security boundaries:
 
-### DynamoDB
+```text
+Who is the user?
+→ Cognito
+
+What AWS services may the workload access?
+→ IAM + EKS Pod Identity
+```
+
+---
+
+# IAM Permissions
+
+The workload IAM role is restricted to the AWS operations required by the application.
+
+## DynamoDB
 
 ```text
 dynamodb:GetItem
@@ -199,116 +599,158 @@ Access is restricted to:
 pharmacy-api-drugs
 ```
 
-### EventBridge
+## EventBridge
 
 ```text
 events:PutEvents
 ```
 
-Access is restricted to the required EventBridge event bus.
+Access is restricted to the required event bus.
 
-No AWS access key or secret access key is stored inside the Kubernetes workload.
+No AWS access key or secret key is stored inside the Kubernetes workload.
 
 ---
 
-# Application Flow
+# DynamoDB
 
-Creating a drug follows this path:
+Drug records are stored in:
 
 ```text
-POST /drugs
-    │
-    ▼
-FastAPI Route
-    │
-    ▼
-Drug Service
-    │
-    ├── Generate Record ID
-    │
-    ├── Attach Tenant/User Context
-    │
-    ├── Persist Record to DynamoDB
-    │
-    └── Publish DrugCreated Event
-    │
-    ▼
-Amazon EventBridge
+pharmacy-api-drugs
 ```
 
-Example request:
+The table uses:
 
-```bash
-curl -X POST http://127.0.0.1:8000/drugs \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "drug_name": "Amoxicillin",
-    "batch_number": "BATCH-EKS-001",
-    "quantity": 120,
-    "reorder_level": 25,
-    "expiry_date": "2027-12-31",
-    "supplier": "Portfolio Pharma"
-  }'
+```text
+Partition Key: id
+Type: String
+Billing Mode: PAY_PER_REQUEST
 ```
 
-Example successful response:
+Records contain authenticated identity context:
 
-```json
-{
-  "message": "Drug created successfully",
-  "data": {
-    "drug_name": "Amoxicillin",
-    "batch_number": "BATCH-EKS-001",
-    "quantity": 120,
-    "reorder_level": 25,
-    "expiry_date": "2027-12-31",
-    "supplier": "Portfolio Pharma",
-    "tenant_id": "tenant_001",
-    "created_by": "user_123"
-  }
-}
+```text
+id
+drug_name
+batch_number
+quantity
+reorder_level
+expiry_date
+supplier
+tenant_id
+created_by
 ```
 
 ---
 
-# Authentication Scope
+# EventBridge
 
-This repository currently focuses on EKS workload engineering rather than production application authentication.
-
-The application currently uses demo tenant and user claims:
+Successful drug creation publishes:
 
 ```text
-tenant_id: tenant_001
-user_id: user_123
+Source:     pharmacy-api
+DetailType: DrugCreated
 ```
 
-These values demonstrate tenant-aware record creation but are not production authentication.
+The EventBridge bus is configured using:
 
-A production implementation should replace the demo claim provider with validated identity claims from:
+```text
+EVENT_BUS_NAME
+```
 
-- Amazon Cognito
-- another OIDC provider
-- JWT-based authentication
+instead of being hard-coded in the application.
 
-This limitation is intentionally documented rather than presented as completed production authentication.
+The service checks:
+
+```text
+FailedEntryCount
+```
+
+and raises an application error if EventBridge reports failed entries.
+
+---
+
+# Validation
+
+The authentication and application changes are covered by automated tests.
+
+Current test coverage includes:
+
+- valid access token
+- expired access token
+- ID token rejection
+- wrong client rejection
+- missing tenant rejection
+- authenticated principal creation
+- public health endpoint
+- missing bearer token
+- `/auth/me`
+- identity propagation into the service layer
+- DynamoDB record creation
+- EventBridge success handling
+- EventBridge failure handling
+
+Current validated result:
+
+```text
+12 tests
+OK
+```
+
+---
+
+# CI / Validation Evidence
+
+The project was validated with:
+
+```text
+Python unit tests
+YAML lint
+Kubernetes schema validation
+Git diff whitespace validation
+```
+
+![Cognito CI validation](docs/cognito-ci-validation.png)
+
+Validation result:
+
+```text
+Unit tests:
+12 tests
+OK
+
+YAML:
+PASS
+
+Kubernetes:
+5 resources valid
+0 invalid
+0 errors
+
+git diff --check:
+PASS
+```
 
 ---
 
 # Continuous Integration
 
-The GitHub Actions workflow runs on pull requests and pushes to `main`.
+GitHub Actions runs on:
 
-It validates three areas.
+```text
+pull_request
+push to main
+```
+
+The workflow validates three areas.
 
 ## Python Tests
 
 ```text
 Install dependencies
-        │
-        ▼
+        ↓
 Compile application modules
-        │
-        ▼
+        ↓
 Run unit tests
 ```
 
@@ -316,22 +758,18 @@ Run unit tests
 
 ```text
 Build Docker image
-        │
-        ▼
+        ↓
 Verify non-root image user
-        │
-        ▼
+        ↓
 Run hardened container
         │
         ├── Read-only filesystem
         ├── Drop all capabilities
         ├── no-new-privileges
         └── Memory-backed /tmp
-        │
-        ▼
+        ↓
 Verify /health
-        │
-        ▼
+        ↓
 Confirm runtime UID is non-root
 ```
 
@@ -345,121 +783,112 @@ Kubernetes YAML
       └── kubeconform
 ```
 
-This provides automated validation before changes reach `main`.
-
 ---
 
 # EKS Infrastructure
 
-The repository includes an `eksctl` cluster definition:
+The repository includes:
 
 ```text
 eks/cluster.yaml
 ```
 
-The cluster configuration defines:
+The cluster definition contains:
 
 - cluster name: `pharmacy-eks`
-- AWS region: `eu-west-2`
+- region: `eu-west-2`
 - Kubernetes 1.36
 - managed EC2 node group
-- `t3.medium` worker node
-- desired capacity of 1
-- minimum capacity of 1
-- maximum capacity of 2
-- EKS Pod Identity Agent add-on
-- project and environment tags
+- `t3.medium` worker
+- desired capacity: 1
+- minimum capacity: 1
+- maximum capacity: 2
+- EKS Pod Identity Agent
+- project/environment tags
 
-Create the cluster with:
-
-```bash
-eksctl create cluster -f eks/cluster.yaml
-```
-
-Verify the nodes:
-
-```bash
-kubectl get nodes -o wide
-```
-
-Verify the Pod Identity Agent:
-
-```bash
-kubectl get pods -n kube-system | grep pod-identity
-```
+The EKS environment was used during the workload deployment phase and may be removed when not actively being demonstrated to avoid unnecessary AWS cost.
 
 ---
 
 # Kubernetes Deployment
 
-Deploy the application resources:
+Deploy:
 
 ```bash
 kubectl apply -f k8s/
 ```
 
-Wait for the deployment:
+Wait for rollout:
 
 ```bash
 kubectl rollout status deployment/pharmacy-api
 ```
 
-Inspect the workload:
+Inspect:
 
 ```bash
 kubectl get deploy,pods,svc -o wide
 ```
 
-Expected state:
+The Kubernetes manifests expect OIDC configuration through the ConfigMap.
 
-```text
-deployment/pharmacy-api   2/2 Available
+Example portable configuration:
 
-pod/pharmacy-api-...      1/1 Running
-pod/pharmacy-api-...      1/1 Running
+```yaml
+OIDC_ISSUER: "https://cognito-idp.eu-west-2.amazonaws.com/REPLACE_USER_POOL_ID"
+OIDC_CLIENT_ID: "REPLACE_APP_CLIENT_ID"
+OIDC_TENANT_CLAIM: "custom:tenant_id"
+OIDC_ROLE_CLAIM: "custom:role"
+```
+
+Real environment identifiers are intentionally not required in the repository.
+
+---
+
+# Local Authentication Configuration
+
+Example:
+
+```bash
+export OIDC_ISSUER="https://cognito-idp.eu-west-2.amazonaws.com/<user-pool-id>"
+export OIDC_CLIENT_ID="<app-client-id>"
+
+export AWS_DEFAULT_REGION="eu-west-2"
+export TABLE_NAME="pharmacy-api-drugs"
+export EVENT_BUS_NAME="default"
+```
+
+Start:
+
+```bash
+uvicorn app.main:app --reload
 ```
 
 ---
 
 # Health Validation
 
-The Kubernetes service currently uses `ClusterIP`.
-
-For local validation:
-
-```bash
-kubectl port-forward service/pharmacy-api-service 8000:8000
-```
-
-Then:
-
 ```bash
 curl -i http://127.0.0.1:8000/health
 ```
 
-Expected result:
+Expected:
 
 ```text
 HTTP/1.1 200 OK
-```
-
-```json
-{
-  "status": "ok"
-}
 ```
 
 ---
 
 # Docker
 
-Build the application:
+Build:
 
 ```bash
 docker build -t pharmacy-api .
 ```
 
-Run locally:
+Run:
 
 ```bash
 docker run \
@@ -469,7 +898,7 @@ docker run \
   pharmacy-api
 ```
 
-The hardened runtime was also validated with:
+Hardened runtime:
 
 ```bash
 docker run \
@@ -486,59 +915,17 @@ docker run \
 
 # Amazon ECR
 
-The application container is stored in Amazon ECR.
+The application image is stored in Amazon ECR.
 
-The Kubernetes Deployment references an immutable image digest rather than a mutable `latest` tag.
-
-Example:
+Kubernetes references an immutable digest:
 
 ```text
 pharmacy-api@sha256:...
 ```
 
-This ensures the Kubernetes Deployment references an exact container artifact.
+instead of a mutable `latest` tag.
 
----
-
-# DynamoDB
-
-Application records are stored in:
-
-```text
-pharmacy-api-drugs
-```
-
-The table uses:
-
-```text
-Partition Key: id
-Type: String
-Billing Mode: PAY_PER_REQUEST
-```
-
-A real record submitted through the deployed EKS application was successfully persisted and verified directly in DynamoDB.
-
----
-
-# IAM Configuration
-
-The repository contains the workload IAM configuration under:
-
-```text
-iam/
-├── pharmacy-api-policy.json
-└── pod-identity-trust.json
-```
-
-The trust policy restricts Pod Identity usage to:
-
-```text
-Cluster:        pharmacy-eks
-Namespace:      default
-ServiceAccount: pharmacy-api
-```
-
-The runtime policy grants only the AWS permissions required by the application.
+This provides deterministic workload deployment.
 
 ---
 
@@ -553,18 +940,28 @@ The runtime policy grants only the AWS permissions required by the application.
 ├── app/
 │   ├── api/
 │   │   └── routes.py
+│   │
 │   ├── core/
-│   │   └── config.py
+│   │   ├── config.py
+│   │   └── security.py
+│   │
 │   ├── infra/
 │   │   ├── aws_clients.py
 │   │   └── dynamodb.py
+│   │
 │   ├── models/
 │   │   └── drug.py
+│   │
 │   ├── services/
 │   │   └── drug_service.py
+│   │
 │   └── main.py
 │
 ├── docs/
+│   ├── cognito-authentication.png
+│   ├── cognito-ci-validation.png
+│   ├── cognito-drug-create.png
+│   ├── cognito-dynamodb-persistence.png
 │   ├── dynamodb-persistence.png
 │   ├── eks-cluster-ready.png
 │   ├── github-actions-ci.png
@@ -587,7 +984,9 @@ The runtime policy grants only the AWS permissions required by the application.
 │   └── serviceaccount.yaml
 │
 ├── tests/
-│   └── test_drug_service.py
+│   ├── test_auth.py
+│   ├── test_drug_service.py
+│   └── test_routes.py
 │
 ├── .dockerignore
 ├── .gitignore
@@ -605,11 +1004,30 @@ The runtime policy grants only the AWS permissions required by the application.
 
 - Amazon EKS
 - Amazon ECR
+- Amazon Cognito
 - DynamoDB
 - EventBridge
 - AWS IAM
 - EKS Pod Identity
 - EC2 managed worker nodes
+- Cognito User Pools
+- Cognito App Clients
+- Cognito Groups
+- JWKS-based token validation
+
+## Identity and Security
+
+- OIDC
+- JWT
+- RS256 signatures
+- JWKS
+- issuer validation
+- client/audience validation
+- access-token enforcement
+- tenant-aware identity
+- role-aware identity
+- public vs protected API boundaries
+- fail-closed authentication
 
 ## Kubernetes
 
@@ -619,10 +1037,10 @@ The runtime policy grants only the AWS permissions required by the application.
 - readiness probes
 - liveness probes
 - rolling updates
-- workload security contexts
+- security contexts
 - resource requests and limits
 - seccomp
-- container capability reduction
+- Linux capability reduction
 - Kubernetes manifest validation
 
 ## Container Engineering
@@ -633,7 +1051,7 @@ The runtime policy grants only the AWS permissions required by the application.
 - read-only root filesystems
 - Linux capability reduction
 - restricted writable filesystem paths
-- reduced Docker build contexts
+- reduced build contexts
 
 ## DevOps
 
@@ -641,46 +1059,52 @@ The runtime policy grants only the AWS permissions required by the application.
 - pull request workflows
 - automated Python tests
 - container validation
-- Kubernetes YAML linting
-- Kubernetes schema validation
+- YAML linting
+- kubeconform schema validation
 - deployment verification
 
 ## Backend Engineering
 
 - Python
 - FastAPI
+- PyJWT
 - boto3
 - REST APIs
-- DynamoDB persistence
-- EventBridge event publishing
-- tenant-aware application data
+- DynamoDB
+- EventBridge
+- authenticated tenant context
+- dependency-based FastAPI authentication
 
 ---
 
 # Current Limitations
 
-The project intentionally documents areas that still require further engineering.
+The project intentionally documents remaining production concerns.
 
 Current limitations include:
 
-- application identity claims are currently demo values
-- production JWT validation has not yet been implemented
-- DynamoDB tenant isolation is currently application-level rather than enforced through the key design
-- the EventBridge bus is currently configured as `default`
-- the current ingress configuration requires a compatible ingress controller
-- full external production ingress has not yet been configured
+- tenant separation is encoded through Cognito groups rather than a dedicated identity-management model
+- role values are currently application-defined strings
+- DynamoDB tenant isolation is application-level rather than enforced through the table key design
+- the EventBridge bus currently uses the AWS default event bus
+- the ingress manifest requires a compatible ingress controller
+- full external production ingress is not currently configured
+- Cognito infrastructure is not yet provisioned through Infrastructure as Code
 - full application observability has not yet been implemented
+- token revocation/session-management workflows are not implemented in the API
+- authorization currently validates identity context but does not yet provide fine-grained per-role endpoint permissions
 
 ---
 
 # Next Improvements
 
-Potential next iterations include:
+Potential future iterations include:
 
-- Amazon Cognito or OIDC/JWT authentication
-- DynamoDB tenant-aware partition key design
-- EventBridge configuration through environment variables
-- EventBridge failure handling
+- fine-grained role-based endpoint authorization
+- Cognito infrastructure through Terraform or CloudFormation
+- DynamoDB tenant-aware partition keys
+- dedicated EventBridge event bus
+- EventBridge retry and DLQ handling
 - Kubernetes NetworkPolicies
 - PodDisruptionBudget
 - Horizontal Pod Autoscaling
@@ -690,31 +1114,71 @@ Potential next iterations include:
 - CloudWatch alarms
 - OpenTelemetry tracing
 - end-to-end integration tests
+- deployment automation
 - automated AWS infrastructure provisioning
-- deployment automation from CI/CD
 - SBOM generation
-- image signing and provenance
+- container image signing
+- artifact provenance
+- token/session revocation strategy
+
+---
+
+# Completed Roadmap
+
+```text
+[Complete] FastAPI application
+[Complete] Hardened Docker image
+[Complete] Kubernetes deployment
+[Complete] Amazon ECR
+[Complete] Immutable image digest
+[Complete] Amazon EKS deployment
+[Complete] EKS Pod Identity
+[Complete] Least-privilege IAM
+[Complete] DynamoDB persistence
+[Complete] EventBridge publishing
+[Complete] GitHub Actions CI
+[Complete] Kubernetes validation
+
+[Complete] Amazon Cognito User Pool validation
+[Complete] Cognito App Client
+[Complete] Real Cognito access token
+[Complete] JWKS signature validation
+[Complete] JWT issuer validation
+[Complete] JWT client validation
+[Complete] JWT expiration validation
+[Complete] Access-token validation
+[Complete] Tenant extraction
+[Complete] Role extraction
+[Complete] Authenticated /auth/me endpoint
+[Complete] Protected POST /drugs
+[Complete] Authenticated DynamoDB identity persistence
+[Complete] EventBridge failure validation
+```
 
 ---
 
 # Purpose
 
-This repository is an **Amazon EKS workload engineering case study**.
+This repository is an **AWS cloud-native workload engineering and application security case study**.
 
 It demonstrates how a Python API can be:
 
-- containerized with Docker
-- hardened to run as a non-root workload
+- containerized securely
+- hardened as a non-root workload
 - published to Amazon ECR
-- deployed using an immutable image digest
+- deployed using immutable image digests
 - operated on Amazon EKS
-- granted least-privilege AWS permissions through EKS Pod Identity
-- connected to DynamoDB and EventBridge
-- validated against real AWS services
-- tested through a live application request
-- protected by automated CI checks
+- granted AWS access using EKS Pod Identity
+- authenticated using Amazon Cognito
+- protected using real JWT validation
+- made tenant-aware through validated identity
+- integrated with DynamoDB
+- integrated with EventBridge
+- validated through automated tests
+- checked through CI
+- verified against real AWS services
 
-The focus is on practical Cloud Engineering, Platform Engineering, Kubernetes operations, AWS workload security, and cloud-native application delivery.
+The project focuses on practical Cloud Engineering, Platform Engineering, Kubernetes, AWS workload security, application identity, and cloud-native application delivery.
 
 ---
 
