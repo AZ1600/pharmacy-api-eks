@@ -1,21 +1,44 @@
-from fastapi import APIRouter
+from fastapi import (
+    APIRouter,
+    Depends,
+)
+
+from app.core.security import (
+    Principal,
+    get_current_principal,
+)
 from app.models.drug import DrugRequest
-from app.services.drug_service import create_drug_service
+from app.services.drug_service import (
+    create_drug_service,
+)
+
 
 router = APIRouter()
 
-def get_claims():
+
+@router.get("/auth/me")
+def current_identity(
+    principal: Principal = Depends(
+        get_current_principal
+    ),
+):
     return {
-        "custom:role": "HospitalAdmin",
-        "custom:tenant_id": "tenant_001",
-        "sub": "user_123"
+        "authenticated": True,
+        "user_id": principal.user_id,
+        "tenant_id": principal.tenant_id,
+        "role": principal.role,
     }
 
+
 @router.post("/drugs")
-def create_drug(drug: DrugRequest):
-
-    claims = get_claims()
-    tenant_id = claims["custom:tenant_id"]
-    user_id = claims["sub"]
-
-    return create_drug_service(drug, tenant_id, user_id)
+def create_drug(
+    drug: DrugRequest,
+    principal: Principal = Depends(
+        get_current_principal
+    ),
+):
+    return create_drug_service(
+        drug,
+        tenant_id=principal.tenant_id,
+        user_id=principal.user_id,
+    )
