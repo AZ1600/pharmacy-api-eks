@@ -3,6 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: pharmacy-api
+
 spec:
   replicas: 2
 
@@ -52,7 +53,36 @@ spec:
                 configMapKeyRef:
                   name: pharmacy-api-config
                   key: TABLE_NAME
-                  optional: true
+
+            - name: EVENT_BUS_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: pharmacy-api-config
+                  key: EVENT_BUS_NAME
+
+            - name: OIDC_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: pharmacy-api-config
+                  key: OIDC_ISSUER
+
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: pharmacy-api-config
+                  key: OIDC_CLIENT_ID
+
+            - name: OIDC_TENANT_CLAIM
+              valueFrom:
+                configMapKeyRef:
+                  name: pharmacy-api-config
+                  key: OIDC_TENANT_CLAIM
+
+            - name: OIDC_ROLE_CLAIM
+              valueFrom:
+                configMapKeyRef:
+                  name: pharmacy-api-config
+                  key: OIDC_ROLE_CLAIM
 
           securityContext:
             allowPrivilegeEscalation: false

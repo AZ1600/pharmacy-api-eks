@@ -3,5 +3,18 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: pharmacy-api-config
+
 data:
   TABLE_NAME: pharmacy-api-drugs
+  EVENT_BUS_NAME: default
+
+  # OIDC / Cognito configuration.
+  #
+  # Replace these values with the real Cognito
+  # User Pool issuer and App Client ID before
+  # deploying authenticated routes.
+  OIDC_ISSUER: "https://cognito-idp.eu-west-2.amazonaws.com/REPLACE_USER_POOL_ID"
+  OIDC_CLIENT_ID: "REPLACE_APP_CLIENT_ID"
+
+  OIDC_TENANT_CLAIM: "custom:tenant_id"
+  OIDC_ROLE_CLAIM: "custom:role"
