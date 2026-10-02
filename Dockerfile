@@ -6,16 +6,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install --only-upgrade -y libpcre2-8-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --system appgroup \
     && adduser --system --ingroup appgroup --no-create-home appuser
 
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir --upgrade \
-        "jaraco.context==6.1.2" \
-        "wheel==0.48.0"
-
+    && pip uninstall --yes setuptools wheel jaraco.context || true
 
 COPY --chown=appuser:appgroup app ./app
 
