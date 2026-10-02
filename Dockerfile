@@ -11,7 +11,11 @@ RUN addgroup --system appgroup \
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --upgrade \
+        "jaraco.context==6.1.2" \
+        "wheel==0.48.0"
+
 
 COPY --chown=appuser:appgroup app ./app
 
