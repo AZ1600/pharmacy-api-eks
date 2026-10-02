@@ -44,7 +44,7 @@ spec:
 
       containers:
         - name: pharmacy-api
-          image: 808101329332.dkr.ecr.eu-west-2.amazonaws.com/pharmacy-api@sha256:c5caca48c6cc1984429de603c138d33e720f12bf19c9db5c9b2ec569f9bc1829
+          image: REPLACE_IMAGE_URI
           imagePullPolicy: IfNotPresent
 
           ports:

@@ -1,0 +1,188 @@
+---
+name: Deploy to Amazon EKS
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: Confirm deployment to the live EKS environment
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: pharmacy-production-eks
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  ECR_REPOSITORY: pharmacy-api
+  EKS_CLUSTER: pharmacy-eks
+  K8S_NAMESPACE: default
+  DEPLOYMENT_NAME: pharmacy-api
+  CONTAINER_NAME: pharmacy-api
+
+jobs:
+  deploy:
+    name: Build and deploy
+    if: github.ref == 'refs/heads/main' && inputs.confirm_deploy == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          OIDC_ISSUER: ${{ vars.OIDC_ISSUER }}
+          OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+        run: |
+          test -n "${AWS_DEPLOY_ROLE_ARN}" || {
+            echo "AWS_DEPLOY_ROLE_ARN repository variable is required"
+            exit 1
+          }
+
+          test -n "${OIDC_ISSUER}" || {
+            echo "OIDC_ISSUER repository variable is required"
+            exit 1
+          }
+
+          test -n "${OIDC_CLIENT_ID}" || {
+            echo "OIDC_CLIENT_ID repository variable is required"
+            exit 1
+          }
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push immutable image
+        id: image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE_TAG="${GITHUB_SHA}"
+          TAGGED_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          docker build \
+            --pull \
+            --tag "${TAGGED_IMAGE}" \
+            .
+
+          docker push "${TAGGED_IMAGE}"
+
+          IMAGE_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids imageTag="${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}@${IMAGE_DIGEST}"
+
+          echo "image_uri=${IMAGE_URI}" >> "${GITHUB_OUTPUT}"
+          echo "Deploying immutable image: ${IMAGE_URI}"
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name "${EKS_CLUSTER}" \
+            --region "${AWS_REGION}"
+
+          kubectl version --client
+          kubectl get nodes
+
+      - name: Render runtime configuration
+        env:
+          OIDC_ISSUER: ${{ vars.OIDC_ISSUER }}
+          OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+        run: |
+          kubectl create configmap pharmacy-api-config \
+            --namespace "${K8S_NAMESPACE}" \
+            --from-literal=TABLE_NAME=pharmacy-api-drugs \
+            --from-literal=EVENT_BUS_NAME=default \
+            --from-literal=OIDC_ISSUER="${OIDC_ISSUER}" \
+            --from-literal=OIDC_CLIENT_ID="${OIDC_CLIENT_ID}" \
+            --from-literal=OIDC_TENANT_CLAIM=custom:tenant_id \
+            --from-literal=OIDC_ROLE_CLAIM=custom:role \
+            --dry-run=client \
+            --output yaml \
+            > /tmp/configmap.yaml
+
+      - name: Render immutable deployment image
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
+        run: |
+          sed \
+            "s|REPLACE_IMAGE_URI|${IMAGE_URI}|g" \
+            k8s/deployment.yaml \
+            > /tmp/deployment.yaml
+
+          grep "image:" /tmp/deployment.yaml
+
+      - name: Deploy Kubernetes resources
+        run: |
+          kubectl apply -f k8s/serviceaccount.yaml
+          kubectl apply -f /tmp/configmap.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/network-policy.yaml
+          kubectl apply -f k8s/pod-disruption-budget.yaml
+          kubectl apply -f k8s/ingress.yaml
+          kubectl apply -f /tmp/deployment.yaml
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status \
+            deployment/${DEPLOYMENT_NAME} \
+            --namespace "${K8S_NAMESPACE}" \
+            --timeout=5m
+
+          kubectl get deployment,pods,service \
+            --namespace "${K8S_NAMESPACE}" \
+            -o wide
+
+      - name: Verify application health
+        run: |
+          kubectl port-forward \
+            --namespace "${K8S_NAMESPACE}" \
+            service/pharmacy-api-service \
+            8000:8000 \
+            > /tmp/port-forward.log 2>&1 &
+
+          PORT_FORWARD_PID=$!
+
+          cleanup() {
+            kill "${PORT_FORWARD_PID}" 2>/dev/null || true
+          }
+
+          trap cleanup EXIT
+
+          for attempt in {1..15}; do
+            if curl \
+              --fail \
+              --silent \
+              http://127.0.0.1:8000/health; then
+              echo
+              echo "Application health verification passed."
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          cat /tmp/port-forward.log
+          exit 1
