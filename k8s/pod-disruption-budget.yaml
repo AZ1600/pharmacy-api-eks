@@ -1,0 +1,12 @@
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pharmacy-api
+
+spec:
+  minAvailable: 1
+
+  selector:
+    matchLabels:
+      app: pharmacy-api
