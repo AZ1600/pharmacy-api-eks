@@ -6,9 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+
 RUN apt-get update \
-    && apt-get install --only-upgrade -y libpcre2-8-0 \
+    && apt-get install --only-upgrade -y libpcre2-8-0 zlib1g \
     && rm -rf /var/lib/apt/lists/*
+
 
 RUN addgroup --system appgroup \
     && adduser --system --ingroup appgroup --no-create-home appuser
