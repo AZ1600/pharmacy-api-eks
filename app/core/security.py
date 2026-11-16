@@ -207,10 +207,7 @@ def validate_token(
         "token_use"
     )
 
-    if (
-        token_use is not None
-        and token_use != "access"
-    ):
+    if token_use != "access":
         _unauthorized(
             "JWT is not an access token."
         )

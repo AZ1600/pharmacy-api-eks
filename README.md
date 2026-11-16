@@ -273,6 +273,10 @@ Invalid signature / issuer / client / token type / expiration
         ↓
 401 Unauthorized
 
+Missing or non-access token_use (including ID tokens)
+        ↓
+401 Unauthorized
+
 Valid token without tenant identity
         ↓
 403 Forbidden
@@ -467,6 +471,8 @@ Current application test coverage includes:
 - valid access token
 - expired access token
 - ID token rejection
+- missing, null, and unexpected token_use rejection
+- unauthorized requests rejected before drug creation
 - wrong client rejection
 - missing tenant rejection
 - authenticated principal creation
@@ -478,11 +484,10 @@ Current application test coverage includes:
 - EventBridge success handling
 - EventBridge failure handling
 
-Current result:
+Run the unit tests without AWS deployment:
 
-```text
-12 tests
-OK
+```bash
+python -m unittest discover -s tests -v
 ```
 
 ---

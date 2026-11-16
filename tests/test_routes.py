@@ -97,6 +97,7 @@ class TestAuthenticatedRoutes(
     def create_token(
         self,
         include_tenant=True,
+        include_token_use=True,
     ):
         now = int(time.time())
 
@@ -116,6 +117,9 @@ class TestAuthenticatedRoutes(
             claims[
                 "custom:tenant_id"
             ] = "tenant-001"
+
+        if not include_token_use:
+            claims.pop("token_use", None)
 
         return jwt.encode(
             claims,
@@ -177,6 +181,37 @@ class TestAuthenticatedRoutes(
             response.status_code,
             401,
         )
+
+    @patch(
+        "app.api.routes."
+        "create_drug_service"
+    )
+    def test_create_drug_missing_token_use_is_unauthorized(
+        self,
+        mock_create_drug,
+    ):
+        token = self.create_token(
+            include_token_use=False
+        )
+
+        response = self.client.post(
+            "/drugs",
+            headers=self.auth_headers(token),
+            json={
+                "drug_name": "Amoxicillin",
+                "batch_number": "AMX-001",
+                "quantity": 50,
+                "reorder_level": 10,
+                "expiry_date": "2027-12-31",
+                "supplier": "Demo Supplier",
+            },
+        )
+
+        self.assertEqual(
+            response.status_code,
+            401,
+        )
+        mock_create_drug.assert_not_called()
 
     def test_missing_tenant_claim_returns_403(
         self,

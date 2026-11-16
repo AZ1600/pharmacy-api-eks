@@ -94,6 +94,7 @@ class TestJwtAuthentication(
 
     def create_token(
         self,
+        omit_token_use=False,
         **overrides,
     ):
         now = int(time.time())
@@ -115,6 +116,9 @@ class TestJwtAuthentication(
         claims.update(
             overrides
         )
+
+        if omit_token_use:
+            claims.pop("token_use", None)
 
         return jwt.encode(
             claims,
@@ -174,6 +178,57 @@ class TestJwtAuthentication(
     ):
         token = self.create_token(
             client_id="wrong-client"
+        )
+
+        with self.assertRaises(
+            HTTPException
+        ) as context:
+            validate_token(token)
+
+        self.assertEqual(
+            context.exception.status_code,
+            401,
+        )
+
+    def test_missing_token_use_is_rejected(
+        self,
+    ):
+        token = self.create_token(
+            omit_token_use=True
+        )
+
+        with self.assertRaises(
+            HTTPException
+        ) as context:
+            validate_token(token)
+
+        self.assertEqual(
+            context.exception.status_code,
+            401,
+        )
+
+    def test_null_token_use_is_rejected(
+        self,
+    ):
+        token = self.create_token(
+            token_use=None
+        )
+
+        with self.assertRaises(
+            HTTPException
+        ) as context:
+            validate_token(token)
+
+        self.assertEqual(
+            context.exception.status_code,
+            401,
+        )
+
+    def test_unexpected_token_use_is_rejected(
+        self,
+    ):
+        token = self.create_token(
+            token_use="refresh"
         )
 
         with self.assertRaises(
